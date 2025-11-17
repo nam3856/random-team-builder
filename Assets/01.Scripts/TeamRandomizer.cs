@@ -12,7 +12,7 @@ using System.Text;
 public class TeamRandomizer : MonoBehaviour
 {
     [Header("UI & 이펙트")]
-    [SerializeField] private TMP_Text[] teamTexts;                  // 7개
+    [SerializeField] private TMP_Text[] teamTexts;                  // 6개
     [SerializeField] private ParticleSystem[] teamEffects;          // 팀 완성 팡
     [SerializeField] private ParticleSystem[] teamMemberEffects;    // 멤버 등장 팡
     [SerializeField] private AudioSource effect;                    // 팡 사운드
@@ -23,15 +23,18 @@ public class TeamRandomizer : MonoBehaviour
     [SerializeField] private GameObject SettingCanvas;          // 설정 UI
     [SerializeField] private Button shuffleButton;                         // 셔플 버튼
     [SerializeField] private GameObject CompletedText;                 // 완료 텍스트
-    [SerializeField] private Subscription subscription;                // 왠진 모르겠지만 자막 출력 스크립트
+    [SerializeField] private Subscription subscription;                // 자막 출력 스크립트
 
     [Header("옵션")]
     [SerializeField] private Toggle noDuplicateToggle;              // 이전 팀 중복 방지 옵션
     [SerializeField] private Toggle fixedSeedToggle;                // 시드 고정 옵션
     [SerializeField] private TMP_InputField seedInputField;         // 시드 입력 필드
 
-    [Header("플레이어 명단 (28명)")]
-    [SerializeField] private List<string> players = new();          // 에디터에서 28명 입력
+    [Header("플레이어 명단")]
+    [SerializeField] private List<string> players = new();   // 여기에는 "기본 18명"만 넣기
+
+    [Header("깍두기")]
+    [SerializeField] private List<string> extras = new();
 
     [Header("Exit Button")]
     [SerializeField] private GameObject ExitButton;                // 종료 버튼
@@ -64,13 +67,13 @@ public class TeamRandomizer : MonoBehaviour
         shuffleButton.interactable = false;
         SettingCanvas.SetActive(false);
 
-        // RNG 초기화: 시드 고정 옵션 확인
+        // RNG 초기화
         if (fixedSeedToggle.isOn)
         {
             if (!int.TryParse(seedInputField.text, out int seed))
             {
                 Debug.LogWarning("잘못된 시드값입니다. 기본 시드(0)로 고정합니다.");
-                ErrorText.text = "PreviousTeams.txt를 읽어오지 못했거나, 7개 팀 정보가 아닙니다.";
+                ErrorText.text = "시드값이 잘못되었습니다. 기본 시드(0) 사용.";
                 seed = 0;
             }
             rng = new System.Random(seed);
@@ -80,39 +83,98 @@ public class TeamRandomizer : MonoBehaviour
             rng = new System.Random();
         }
 
-        // 1) 파일에서 1회차 팀 불러오기
-        var previousTeams = LoadPreviousTeamsFromFile();
-        if (previousTeams == null || previousTeams.Count < 7)
+        // --- 인원 검증 ---
+        if (players.Count != 18)
         {
-            Debug.LogError("PreviousTeams.txt를 읽어오지 못했거나, 7개 팀 정보가 아닙니다.");
-            ErrorText.text = "PreviousTeams.txt를 읽어오지 못했거나, 7개 팀 정보가 아닙니다.";
-            SettingCanvas.SetActive(true);
+            ErrorText.text = $"플레이어 인원은 18명이어야 합니다. (현재 {players.Count}명)";
             shuffleButton.interactable = true;
+            SettingCanvas.SetActive(true);
             return;
         }
 
-        // 2) 이전 팀에서 함께 했던 쌍을 기록
-        if (noDuplicateToggle.isOn)
-            bannedPairs = BuildBannedPairs(previousTeams);
-        else
-            bannedPairs = new Dictionary<string, HashSet<string>>();
-
-        // 3) 즉시 2회차 팀 생성
-        teams = GenerateRound2Teams(players, bannedPairs, maxAttempts: 10000);
-        if (teams == null)
+        if (extras.Count < 0 || extras.Count > 3)
         {
-            Debug.LogWarning("유효한 2회차 팀 구성을 찾지 못했습니다.");
-            ErrorText.text = "유효한 2회차 팀 구성을 찾지 못했습니다.";
-            SettingCanvas.SetActive(true);
+            ErrorText.text = "깍두기는 0~3명이어야 합니다.";
             shuffleButton.interactable = true;
+            SettingCanvas.SetActive(true);
             return;
         }
+
+        // 깍두기 players 포함 체크
+        foreach (var k in extras)
+        {
+            if (!players.Contains(k))
+            {
+                ErrorText.text = $"깍두기 [{k}] 가 players 리스트에 없습니다.";
+                shuffleButton.interactable = true;
+                SettingCanvas.SetActive(true);
+                return;
+            }
+        }
+
+        // --- 팀 초기화 (5팀, 4/4/4/3/3) ---
+        teams.Clear();
+        teamsToShow.Clear();
+
+        for (int i = 0; i < 5; i++)
+            teams.Add(new List<string>());
+
+        // ---------- 1) 깍두기 배치 ----------
+        int K = extras.Count;
+
+        // 4인 팀(0,1,2) 중에서 깍두기를 넣을 팀을 K개 뽑기
+        var fourTeamIndices = Enumerable.Range(0, 3).ToList(); // 0,1,2
+        fourTeamIndices = fourTeamIndices.OrderBy(_ => rng.Next()).ToList();
+
+        var selectedTeams = fourTeamIndices.Take(K).ToList();
+
+        // 깍두기를 섞고 배치
+        var shuffledextras = extras.OrderBy(_ => rng.Next()).ToList();
+        for (int i = 0; i < K; i++)
+        {
+            int teamIndex = selectedTeams[i];
+            teams[teamIndex].Add(shuffledextras[i]);  // 한 팀당 깍두기 1명
+        }
+
+        // ---------- 2) 일반 인원 섞기 ----------
+        var normals = players
+            .Where(p => !extras.Contains(p))
+            .OrderBy(_ => rng.Next())
+            .ToList();
+
+        int idx = 0;
+
+        // ---------- 3) 4인 팀(0-2) 자리 채우기 ----------
+        for (int teamIndex = 0; teamIndex < 3; teamIndex++)
+        {
+            while (teams[teamIndex].Count < 4)
+                teams[teamIndex].Add(normals[idx++]);
+        }
+
+        // ---------- 4) 3인 팀(3-4) 자리 채우기 ----------
+        for (int teamIndex = 3; teamIndex < 5; teamIndex++)
+        {
+            while (teams[teamIndex].Count < 3)
+                teams[teamIndex].Add(normals[idx++]);
+        }
+
+        // 18명 정확히 소진됐는지 검증
+        if (idx != normals.Count)
+        {
+            ErrorText.text = "팀 인원 배분 오류(18명 구성 불일치).";
+            shuffleButton.interactable = true;
+            SettingCanvas.SetActive(true);
+            return;
+        }
+
+        // 화면 표시 및 CSV
+        foreach (var t in teams)
+            teamsToShow.AddRange(t);
 
         SaveResultsToCsv();
-
-        // 4) 연출 시작
         StartCoroutine(PlayTeamReveal());
     }
+
 
     // --------------------------------------------------------
     // PreviousTeams.txt 로드
@@ -178,7 +240,13 @@ public class TeamRandomizer : MonoBehaviour
                 for (int i = 0; i < teams.Count; i++)
                 {
                     var members = teams[i];
-                    sw.WriteLine($"Team{i + 1},{members[0]},{members[1]},{members[2]},{members[3]}");
+
+                    string m1 = members.Count > 0 ? members[0] : "";
+                    string m2 = members.Count > 1 ? members[1] : "";
+                    string m3 = members.Count > 2 ? members[2] : "";
+                    string m4 = members.Count > 3 ? members[3] : "";
+
+                    sw.WriteLine($"Team{i + 1},{m1},{m2},{m3},{m4}");
                 }
             }
             Debug.Log($"Result.csv saved to {filePath}");
@@ -257,23 +325,30 @@ public class TeamRandomizer : MonoBehaviour
         musicPlayer.Play();
         randomMoveLight.GoLight();
         yield return new WaitForSeconds(30f);
+
         for (int ti = 0; ti < teams.Count; ti++)
         {
             var group = teams[ti];
             teamTexts[ti].text = "";
             TeamTitles[ti].SetActive(true);
 
-            foreach (var name in group)
+            for (int mi = 0; mi < group.Count; mi++)
             {
+                var name = group[mi];
+
                 bool isLastTeam = ti == teams.Count - 1;
-                bool isLastMember = name == group[3];
+                bool isLastMember = mi == group.Count - 1;
 
                 if (isLastTeam && isLastMember)
                 {
                     // 마지막 팀의 마지막 멤버는 딜레이 후 '팡' 등장만
+                    CameraFocusController.Instance.FocusOnTeam(teamTexts[ti].transform, 2.8f, 0.4f);
+                    randomMoveLight.FocusLightOnTeam(ti);
+
                     CameraFocusController.Instance.ShakeCamera(1f, 3f);
 
-                    teamTexts[ti].text += "최태온 강사님";
+                    // 먼저 가짜 이름(김경호) 보여주고
+                    teamTexts[ti].text += "김경호";
 
                     yield return new WaitForSeconds(3f);
 
@@ -282,7 +357,7 @@ public class TeamRandomizer : MonoBehaviour
                     teamMemberEffects[ti].Play();
                     effect.Play();
 
-                    // 텍스트 출력
+                    // 텍스트를 실제 이름으로 교체
                     teamTexts[ti].text = ReplaceLastLine(teamTexts[ti].text, name);
                     teamsToShow.Remove(name);
 
@@ -303,12 +378,16 @@ public class TeamRandomizer : MonoBehaviour
                     randomMoveLight.FocusLightOnTeam(ti);
                     teamMemberEffects[ti].gameObject.SetActive(true);
                     teamMemberEffects[ti].Play();
+
                     yield return StartCoroutine(PlayNameRoulette(ti, name));
 
                     effect.Play();
 
-                    teamTexts[ti].text += (teamTexts[ti].text == "" ? "" : "\n");
-                    teamsToShow.Remove(name);
+                    if (!string.IsNullOrEmpty(teamTexts[ti].text))
+                        teamTexts[ti].text += "\n";
+
+                    //teamTexts[ti].text += name;
+                    //teamsToShow.Remove(name);
 
                     teamTexts[ti].transform
                         .DOScale(1.1f, 0.08f)
@@ -322,7 +401,6 @@ public class TeamRandomizer : MonoBehaviour
                     yield return new WaitForSeconds(0.3f);
                 }
             }
-
 
             // 팀 완성 팡!
             teamEffects[ti].gameObject.SetActive(true);
@@ -352,7 +430,7 @@ public class TeamRandomizer : MonoBehaviour
         var candidates = teamsToShow.ToList();
 
         candidates.Add("<color=#FFD700><size=120%>김홍일 강사님</size></color>");
-        candidates.Add("<color=#FFD700><size=120%>최태온 강사님</size></color>");
+        candidates.Add("<color=#FFD700><size=120%>김경호 강사님</size></color>");
 
         if (!candidates.Contains(finalName))
             candidates.Add(finalName); // 혹시 빠졌을 경우 대비
