@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 public class SoundManager : MonoBehaviour
@@ -9,13 +10,36 @@ public class SoundManager : MonoBehaviour
 
     private void Awake()
     {
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+
+        Instance = this;
+
+        if (audioSource == null)
+            audioSource = GetComponent<AudioSource>();
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+            Instance = null;
     }
 
     public void Play(string name)
     {
-        if (name == "Pop") audioSource.PlayOneShot(popSfx[0]);
-        else audioSource.PlayOneShot(popSfx[1]);
+        if (audioSource == null)
+            audioSource = GetComponent<AudioSource>();
+
+        if (audioSource == null || !audioSource.isActiveAndEnabled)
+            return;
+
+        int clipIndex = string.Equals(name, "Pop", StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+        if (popSfx == null || clipIndex >= popSfx.Length || popSfx[clipIndex] == null)
+            return;
+
+        audioSource.PlayOneShot(popSfx[clipIndex]);
     }
 }

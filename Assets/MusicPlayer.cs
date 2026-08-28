@@ -1,15 +1,37 @@
 using UnityEngine;
-using UnityEngine.Audio;
 
 public class MusicPlayer : MonoBehaviour
 {
-    AudioSource _audioSource;
-    private void Start()
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip musicClip;
+
+    private void Awake()
     {
-        _audioSource = GetComponent<AudioSource>();
+        ResolveAudioSource();
     }
+
     public void Play()
     {
-        _audioSource.Play();
+        ResolveAudioSource();
+
+        if (audioSource == null)
+            return;
+
+        if (musicClip != null)
+            audioSource.clip = musicClip;
+
+        if (audioSource.clip == null)
+        {
+            audioSource.Stop();
+            return;
+        }
+
+        audioSource.Play();
+    }
+
+    private void ResolveAudioSource()
+    {
+        if (audioSource == null)
+            audioSource = GetComponent<AudioSource>();
     }
 }

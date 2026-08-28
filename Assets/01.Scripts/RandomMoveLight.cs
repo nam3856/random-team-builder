@@ -1,17 +1,23 @@
+using System.Collections;
 using DG.Tweening;
 using UnityEngine;
-using System.Collections;
 using UnityEngine.Rendering.Universal;
-using MoreMountains.Feedbacks;
+
 public class RandomMoveLight : MonoBehaviour
 {
     [SerializeField] private Light2D[] movingLights;
-    [SerializeField] private Transform[] teamTargets; // ∞¢ ∆¿ ¿ßƒ°∏¶ Transform¿∏∑Œ µÓ∑œ
+    [SerializeField] private Transform[] teamTargets;
 
-    private bool isFocusing = false;
+    private bool isFocusing;
+    private int currentLightIndex;
+
+    public int TeamTargetCount => teamTargets?.Length ?? 0;
 
     public void GoLight()
     {
+        if (movingLights == null || movingLights.Length == 0)
+            return;
+
         StartCoroutine(RandomMoveLights());
     }
 
@@ -20,33 +26,72 @@ public class RandomMoveLight : MonoBehaviour
         isFocusing = true;
         yield return new WaitForSeconds(0.5f);
         isFocusing = false;
+
         while (!isFocusing)
         {
-            foreach (var light in movingLights)
+            foreach (Light2D light in movingLights)
             {
-                Vector3 randomPos = new Vector3(
-                    Random.Range(-8f, 7f),
-                    Random.Range(-6f, 6f)
-                );
-                light.transform.DOMove(randomPos, 1.5f).SetEase(Ease.InOutExpo);
-                light.GetComponent<MMF_Player>()?.PlayFeedbacks();
+                if (light == null)
+                    continue;
+
+                Vector3 randomPosition = GetRandomSafeViewportPosition(light.transform.position.z);
+
+                light.transform.DOMove(randomPosition, 1.5f).SetEase(Ease.InOutExpo);
+                light.GetComponent<NativeLightPulse>()?.Play();
             }
 
             yield return new WaitForSeconds(1.5f);
         }
     }
 
-    private int currentLightIndex = 0;
-
     public void FocusLightOnTeam(int teamIndex)
     {
+        if (movingLights == null || movingLights.Length == 0 ||
+            teamTargets == null || teamIndex < 0 || teamIndex >= teamTargets.Length ||
+            teamTargets[teamIndex] == null)
+        {
+            Debug.LogWarning($"ÌåÄ {teamIndex + 1}Ïùò ÎùºÏù¥Ìä∏ ÌÉÄÍπÉÏùÑ Ï∞æÏùÑ Ïàò ÏóÜÏäµÎãàÎã§.");
+            return;
+        }
+
         isFocusing = true;
 
-        var light = movingLights[currentLightIndex];
+        Light2D light = movingLights[currentLightIndex];
         currentLightIndex = (currentLightIndex + 1) % movingLights.Length;
+        if (light == null)
+            return;
 
-        var targetPos = teamTargets[teamIndex].position + new Vector3(0, 1f, -3f); // ªÏ¬¶ ¿ßø°º≠ ∫Ò√ﬂµµ∑œ
-        light.transform.DOMove(targetPos, 0.8f).SetEase(Ease.OutBack);
+        Vector3 targetPosition = teamTargets[teamIndex].position + new Vector3(0f, 1f, -3f);
+        light.transform.DOMove(targetPosition, 0.8f).SetEase(Ease.OutBack);
     }
 
+    private static Vector3 GetRandomSafeViewportPosition(float targetZ)
+    {
+        Camera camera = Camera.main;
+        if (camera == null || Screen.width <= 0 || Screen.height <= 0)
+        {
+            return new Vector3(
+                Random.Range(-8f, 7f),
+                Random.Range(-4.5f, 4.5f),
+                targetZ);
+        }
+
+        Rect safeArea = Screen.safeArea;
+        if (safeArea.width <= 0f || safeArea.height <= 0f)
+            safeArea = new Rect(0f, 0f, Screen.width, Screen.height);
+
+        const float margin = 0.08f;
+        float xMin = Mathf.Lerp(safeArea.xMin / Screen.width, safeArea.xMax / Screen.width, margin);
+        float xMax = Mathf.Lerp(safeArea.xMin / Screen.width, safeArea.xMax / Screen.width, 1f - margin);
+        float yMin = Mathf.Lerp(safeArea.yMin / Screen.height, safeArea.yMax / Screen.height, margin);
+        float yMax = Mathf.Lerp(safeArea.yMin / Screen.height, safeArea.yMax / Screen.height, 1f - margin);
+        float distance = Mathf.Abs(targetZ - camera.transform.position.z);
+        Vector3 minimum = camera.ViewportToWorldPoint(new Vector3(xMin, yMin, distance));
+        Vector3 maximum = camera.ViewportToWorldPoint(new Vector3(xMax, yMax, distance));
+
+        return new Vector3(
+            Random.Range(minimum.x, maximum.x),
+            Random.Range(minimum.y, maximum.y),
+            targetZ);
+    }
 }
